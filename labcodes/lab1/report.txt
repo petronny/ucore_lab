@@ -1,8 +1,167 @@
-##### 
-teset
+练习 1:理解通过 make 生成执行文件的过程。(要求在报告中写出对下述问题的回答)
+在此练习中,大家需要通过阅读代码来了解:
 
-	test
+1. 操作系统镜像文件 ucore.img 是如何一步一步生成的?(需要比较详细地解释 Makefile 中
+每一条相关命令和命令参数的含义,以及说明命令导致的结果)
+$(UCOREIMG): $(kernel) $(bootblock)
+说明ucore.img依赖于$(kernel)和$(bootblock)两步
+	$(kernel): tools/kernel.ld
+	$(kernel): $(KOBJS)
+	说明$(kernel)依赖于tools/kernel.ld和$(KOBJS)
+		KOBJS	= $(call read_packet,kernel libs)
+		KOBJS需要kernel和libs这两个packet
+			其中kernel这个packet的文件包括:
+			KINCLUDE	+= kern/debug/ \
+						   kern/driver/ \
+						   kern/trap/ \
+						   kern/mm/
 
-`aa`
+			KSRCDIR		+= kern/init \
+						   kern/libs \
+						   kern/debug \
+						   kern/driver \
+						   kern/trap \
+						   kern/mm
+			libs这个packet包括
+			LIBDIR	+= libs
+		$(V)$(LD) $(LDFLAGS) -T tools/kernel.ld -o $@ $(KOBJS)
+		tools/kernel.ld在$(KOBJS)完成过程中被完成了
+	$(bootblock): $(call toobj,$(bootfiles)) | $(call totarget,sign)
+	说明$(bootblock)需要$(bootfiles)和sign
+		bootfiles = $(call listf_cc,boot)
+		说明bootfiles需要的文件在boot文件夹下
+		$(call add_files_host,tools/sign.c,sign,sign)
+		说明sign可以通过编译tools/sign.c完成
+由此可以产生ucore.img
 
+2. 一个被系统认为是符合规范的硬盘主引导扇区的特征是什么?
+大小为512字节，结束标志2字节(55 AA)。
+
+练习 2:使用 qemu 执行并调试 lab1 中的软件。(要求在报告中简要写出练习过程)
+为了熟悉使用 qemu 和 gdb 进行的调试工作,我们进行如下的小练习:
+
+1. 从 CPU 加电后执行的第一条指令开始,单步跟踪 BIOS 的执行。
+位置		命令	
+0xfffffff0:	ljmp   $0xf000,$0xe05b
+0x000fe05b:	cmpl   $0x0,%cs:-0x2f2c
+0x000fe062:	jne    0xfc792
+0x000fe066:	xor    %ax,%ax
+0x000fe068:	mov    %ax,%ss
+0x000fe06a:	mov    $0x7000,%esp
+0x000fe070:	mov    $0xf0060,%edx
+0x000fe076:	jmp    0xfc641
+0x000fc641:	mov    %eax,%ecx
+
+2. 在初始化位置 0x7c00 设置实地址断点,测试断点正常。
+(gdb) b *0x7c00
+Breakpoint 1 at 0x7c00
+(gdb) c
+Continuing.
+Breakpoint 1, 0x00007c00 in ?? ()
+
+3. 从 0x7c00 开始跟踪代码运行,将单步跟踪反汇编得到的代码与 bootasm.S 和 bootblock.asm
+进行比较。
+
+反汇编得到的代码如下：
+0x00007c00:  cli    
+0x00007c01:  cld    
+0x00007c02:  xor    %ax,%ax
+0x00007c04:  mov    %ax,%ds
+0x00007c06:  mov    %ax,%es
+0x00007c08:  mov    %ax,%ss
+0x00007c0a:  in     $0x64,%al
+0x00007c0c:  test   $0x2,%al
+0x00007c0e:  jne    0x7c0a
+0x00007c10:  mov    $0xd1,%al
+0x00007c12:  out    %al,$0x64
+0x00007c14:  in     $0x64,%al
+0x00007c16:  test   $0x2,%al
+0x00007c18:  jne    0x7c14
+0x00007c1a:  mov    $0xdf,%al
+0x00007c1c:  out    %al,$0x60
+0x00007c1e:  lgdtw  0x7c6c
+0x00007c23:  mov    %cr0,%eax
+0x00007c26:  or     $0x1,%eax
+0x00007c2a:  mov    %eax,%cr0
+0x00007c2d:  ljmp   $0x8,$0x7c32
+0x00007c32:  mov    $0xd88e0010,%eax
+0x00007c38:  mov    %ax,%es
+0x00007c3a:  mov    %ax,%fs
+0x00007c3c:  mov    %ax,%gs
+0x00007c3e:  mov    %ax,%ss
+0x00007c40:  mov    $0x0,%bp
+0x00007c43:  add    %al,(%bx,%si)
+0x00007c45:  mov    $0x7c00,%sp
+0x00007c48:  add    %al,(%bx,%si)
+0x00007c4a:  call   0x7d0b
+
+经比较完全相同
+
+4. 自己找一个 bootloader 或内核中的代码位置,设置断点并进行测试。
+无它，略．
+
+练习 3:分析 bootloader 进入保护模式的过程。(要求在报告中写出分析)
+
+BIOS 将通过读取硬盘主引导扇区到内存,并转跳到对应内存中的位置执行 bootloader。请分析
+bootloader 是如何完成从实模式进入保护模式的。
+
+启动CPU并进入32位保护模式的主要步骤有：
+	禁用终端，增加串处理
+	设置重要数据段寄存器（DS， ES， SS）
+	启用A20
+	使用bootstrap GDT 以及段转换使得虚拟地址与物理地址相对应，从而保证有效内存空间在转换模式过程中保持不变
+	进入32位保护模式
+	设置保护模式下的数据段寄存器
+	设置栈指针
+	结束过程并调用后面的过程
+
+练习 4:分析 bootloader 加载 ELF 格式的 OS 的过程。(要求在报告中写出分析)
+通过阅读 bootmain.c,了解 bootloader 如何加载 ELF 文件。通过分析源代码和通过 qemu 来运行并调
+试 bootloader&OS,
+
+1. bootloader 如何读取硬盘扇区的?
+bootmain.c中的readsect函数完成此功能，步骤如下：
+	等待硬盘准备
+	使用outb函数发送参数：包括扇区数1，secno的0-7位，8-15位，16-23位，24-26位以及操作码20
+	这些信息被依次发送到0x1f2到0x1f7的空间中
+	继续等待硬盘准备
+	完成读取
+
+2. bootloader 是如何加载 ELF 格式的 OS?
+
+bootmain.c中主函数bootmain完成此功能，步骤如下：
+	调用readseg读取硬盘外第一页（8*SECTSIZE大小）
+	判断该文件是否是一个有效的ELF文件
+	得到PH表的位置与入口数目
+	遍历PH表的每一个入口读取p_va4
+	从ELF头文件出得到入口地址并调用
+
+练习 5:实现函数调用堆栈跟踪函数 (需要编程)
+我们需要在lab1中完成kdebug.c中函数print_stackframe的实现,可以通过函数
+print_stackframe 来跟踪函数调用堆栈中记录的返回地址。请完成实验,并解释最后一行各个数值的含义。
+
+ebp:0x00007bf8 eip:0x00007d73 args:0xc031fcfa 0xc08ed88e 0x64e4d08e 0xfa7502a8
+<unknow>: -- 0x00007d72 –
+
+ebp:0x00007bf8表示bootmain加载的函数的函数入口（ELF文件的entry项），eip:0x00007d73是bootmain的函数地址．args内容无意义，因为栈应该是空栈．
+由于没有函数调用了bootmain，是由实模式直接调用的，所以为<unknow>．
+
+
+练习 6:完善中断初始化和处理 (需要编程)
+请完成编码工作和回答如下问题:
+
+1. 中断向量表中一个表项占多少字节?其中哪几位代表中断处理代码的入口?
+
+中断向量表中一个表项占8个字节，31-16位是段选择子，63-48是偏移的高16位，15-0是偏移的低16位
+
+2. 请编程完善 kern/trap/trap.c 中对中断向量表进行初始化的函数 idt_init。在 idt_init 函数
+中,依次对所有中断入口进行初始化。使用 mmu.h 中的 SETGATE 宏,填充 idt 数组内
+容。注意除了系统调用中断(T_SYSCALL)以外,其它中断均使用中断门描述符,权限为
+内核态权限;而系统调用中断使用 异常,权限为陷阱门描述符。每个 中断的入口由
+无它，略．
+
+3. 请编程完善 trap.c 中的中断处理函数 trap,在对时钟中断进行处理的部分填写 trap 函数中
+处理时钟中断的部分,使操作系统每遇到 100 次时钟中断后,调用 print_ticks 子程序,向
+屏幕上打印一行文字”100 ticks”。
+无它，略
 
