@@ -48,6 +48,11 @@ idt_init(void) {
       *     You don't know the meaning of this instruction? just google it! and check the libs/x86.h to know more.
       *     Notice: the argument of lidt is idt_pd. try to find it!
       */
+	extern uintptr_t  __vectors[];
+	int i;
+	for(i=0;i<256;i++)
+		SETGATE(idt[i],i==T_SYSCALL,0x8,__vectors[i],i==T_SYSCALL?3:0);
+	lidt(&idt_pd);
 }
 
 static const char *
