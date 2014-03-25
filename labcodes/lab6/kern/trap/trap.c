@@ -21,10 +21,6 @@
 
 static void print_ticks() {
     cprintf("%d ticks\n",TICK_NUM);
-#ifdef DEBUG_GRADE
-    cprintf("End of Test.\n");
-    panic("EOT: kernel seems ok.");
-#endif
 }
 
 /* *
@@ -54,7 +50,7 @@ idt_init(void) {
       *     You don't know the meaning of this instruction? just google it! and check the libs/x86.h to know more.
       *     Notice: the argument of lidt is idt_pd. try to find it!
       */
-     /* LAB5 YOUR CODE */ 
+     /* LAB5 YOUR CODE */
      //you should update your lab1 code (just add ONE or TWO lines of code), let user app to use syscall to get the service of ucore
      //so you should setup the syscall interrupt gate in here
 }
@@ -201,7 +197,7 @@ trap_dispatch(struct trapframe *tf) {
                     panic("handle pgfault failed in kernel mode. ret=%d\n", ret);
                 }
                 cprintf("killed by kernel.\n");
-                panic("handle user mode pgfault failed. ret=%d\n", ret); 
+                panic("handle user mode pgfault failed. ret=%d\n", ret);
                 do_exit(-E_KILLED);
             }
         }
@@ -212,7 +208,7 @@ trap_dispatch(struct trapframe *tf) {
     case IRQ_OFFSET + IRQ_TIMER:
 #if 0
     LAB3 : If some page replacement algorithm(such as CLOCK PRA) need tick to change the priority of pages,
-    then you can add code here. 
+    then you can add code here.
 #endif
         /* LAB1 YOUR CODE : STEP 3 */
         /* handle the timer interrupt */
@@ -278,11 +274,11 @@ trap(struct trapframe *tf) {
         // keep a trapframe chain in stack
         struct trapframe *otf = current->tf;
         current->tf = tf;
-    
+
         bool in_kernel = trap_in_kernel(tf);
-    
+
         trap_dispatch(tf);
-    
+
         current->tf = otf;
         if (!in_kernel) {
             if (current->flags & PF_EXITING) {
@@ -294,4 +290,3 @@ trap(struct trapframe *tf) {
         }
     }
 }
-

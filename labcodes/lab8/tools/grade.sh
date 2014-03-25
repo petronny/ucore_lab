@@ -175,6 +175,9 @@ build_run() {
         exit 1
     fi
 
+    # Synchronize all files to disk
+    sync
+
     # now run qemu and save the output
     run_qemu
 
@@ -254,7 +257,7 @@ run_test() {
         select=
         case $1 in
             -tag|-prog)
-                select=`expr substr $1 2 ${#1}`
+                select=${1#-}
                 eval $select='$2'
                 ;;
         esac
@@ -341,7 +344,6 @@ default_check() {
     'PDE(001) fac00000-fb000000 00400000 -rw'                   \
     '  |-- PTE(000e0) faf00000-fafe0000 000e0000 urw'           \
     '  |-- PTE(00001) fafeb000-fafec000 00001000 -rw'		\
-    'check_slob() succeeded!'					\
     'check_vma_struct() succeeded!'                             \
     'page fault at 0x00000100: K/W [no page found].'            \
     'check_pgfault() succeeded!'                                \
@@ -636,4 +638,3 @@ run_test -prog 'matrix'     -check default_check                \
 
 ## print final-score
 show_final
-

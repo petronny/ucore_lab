@@ -175,6 +175,9 @@ build_run() {
         exit 1
     fi
 
+    # Synchronize all files to disk
+    sync
+
     # now run qemu and save the output
     run_qemu
 
@@ -254,7 +257,7 @@ run_test() {
         select=
         case $1 in
             -tag|-prog)
-                select=`expr substr $1 2 ${#1}`
+                select=${1#-}
                 eval $select='$2'
                 ;;
         esac
@@ -615,6 +618,11 @@ run_test -prog 'matrix'     -check default_check                \
         'Iter 1, No.2 philosopher_condvar is eating'                  \
         'Iter 1, No.3 philosopher_condvar is eating'                  \
         'Iter 1, No.4 philosopher_condvar is eating'                  \
+        'phi_test_condvar: state_condvar[0] will eating'              \
+        'phi_test_condvar: state_condvar[1] will eating'              \
+        'phi_test_condvar: state_condvar[2] will eating'              \
+        'phi_test_condvar: state_condvar[3] will eating'              \
+        'phi_test_condvar: state_condvar[4] will eating'              \
         'No.0 philosopher_condvar quit'                                \
         'No.1 philosopher_condvar quit'                                \
         'No.2 philosopher_condvar quit'                                \
@@ -632,4 +640,3 @@ run_test -prog 'matrix'     -check default_check                \
 
 ## print final-score
 show_final
-

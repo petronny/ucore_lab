@@ -6,7 +6,6 @@
 #define TOTAL 5
 /* to get enough accuracy, MAX_TIME (the running time of each process) should >1000 mseconds. */
 #define MAX_TIME  2000
-#define SLEEP_TIME 400
 unsigned int acc[TOTAL];
 int status[TOTAL];
 int pids[TOTAL];
@@ -25,8 +24,6 @@ spin_delay(void)
 int
 main(void) {
      int i,time;
-     cprintf("priority process will sleep %d ticks\n",SLEEP_TIME);
-     sleep(SLEEP_TIME);
      memset(pids, 0, sizeof(pids));
      lab6_set_priority(TOTAL + 1);
 
@@ -35,6 +32,7 @@ main(void) {
           if ((pids[i] = fork()) == 0) {
                lab6_set_priority(i + 1);
                acc[i] = 0;
+               yield();
                while (1) {
                     spin_delay();
                     ++ acc[i];
@@ -45,7 +43,7 @@ main(void) {
                         }
                     }
                }
-               
+
           }
           if (pids[i] < 0) {
                goto failed;
@@ -57,7 +55,7 @@ main(void) {
      for (i = 0; i < TOTAL; i ++) {
          status[i]=0;
          waitpid(pids[i],&status[i]);
-         cprintf("main: pid %d, acc %d, time %d\n",pids[i],status[i],gettime_msec()); 
+         cprintf("main: pid %d, acc %d, time %d\n",pids[i],status[i],gettime_msec());
      }
      cprintf("main: wait pids over\n");
      cprintf("stride sched correct result:");
@@ -77,4 +75,3 @@ failed:
      }
      panic("FAIL: T.T\n");
 }
-
