@@ -109,6 +109,22 @@ alloc_proc(void) {
      *       uint32_t wait_state;                        // waiting state
      *       struct proc_struct *cptr, *yptr, *optr;     // relations between processes
 	 */
+    proc->wait_state =WT_INTERRUPTED;
+	proc->cptr = NULL;
+	proc->yptr = NULL;
+	proc->optr = NULL;
+	proc->state = PROC_UNINIT;
+	proc->pid = -1;
+	proc->runs = 0;
+	proc->kstack = 0;
+	proc->need_resched = 0;
+	proc->parent = NULL;
+	proc->mm = NULL;
+	memset(&(proc->context), 0, sizeof(struct context));
+	proc->tf = NULL;
+	proc->cr3 = boot_cr3;
+	proc->flags = 0;
+	memset(proc->name, 0, PROC_NAME_LEN + 1);
     }
     return proc;
 }
@@ -403,7 +419,31 @@ do_fork(uint32_t clone_flags, uintptr_t stack, struct trapframe *tf) {
 	*    update step 1: set child proc's parent to current process, make sure current process's wait_state is 0
 	*    update step 5: insert proc_struct into hash_list && proc_list, set the relation links of process
     */
-	
+	proc = alloc_proc();
+	proc->pid = get_pid();
+	proc->parent = current;
+	if(proc == NULL)
+	{	
+		goto fork_out;
+	}
+
+	int tmp1 = setup_kstack(proc);
+	if(tmp1 != 0)
+	{
+		goto bad_fork_cleanup_proc;
+	}
+
+	int tmp2 = copy_mm(clone_flags, proc);
+	if(tmp2 != 0)
+	{
+		goto bad_fork_cleanup_kstack;
+	}
+	copy_thread(proc, stack, tf);
+	hash_proc(proc);	
+	set_links(proc);
+	wakeup_proc(proc);
+	ret = proc->pid;
+
 fork_out:
     return ret;
 
@@ -602,6 +642,11 @@ load_icode(unsigned char *binary, size_t size) {
      *          tf_eip should be the entry point of this binary program (elf->e_entry)
      *          tf_eflags should be set to enable computer to produce Interrupt
      */
+	tf->tf_cs = USER_CS;
+    tf->tf_ds = tf->tf_es = tf->tf_ss = USER_DS;
+    tf->tf_esp = USTACKTOP;
+    tf->tf_eip = elf->e_entry;
+    tf->tf_eflags = tf->tf_eflags | FL_IF;
     ret = 0;
 out:
     return ret;
