@@ -1,204 +1,131 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <proc.h>
 #include <sem.h>
 #include <monitor.h>
 #include <assert.h>
 
-#define N 5 /* 哲学家数目 */
-#define LEFT (i-1+N)%N /* i的左邻号码 */
-#define RIGHT (i+1)%N /* i的右邻号码 */
-#define THINKING 0 /* 哲学家正在思考 */
-#define HUNGRY 1 /* 哲学家想取得叉子 */
-#define EATING 2 /* 哲学家正在吃面 */
-#define TIMES  4 /* 吃4次饭 */
 #define SLEEP_TIME 10
+#define MONKEY_N 20
+#define THISSIDE (i%2)
+#define OTHERSIDE (1-(i%2))
+#define WAITING 0
+#define PASSING 1
+#define PASSED 2
 
-//---------- philosophers problem using semaphore ----------------------
-int state_sema[N]; /* 记录每个人状态的数组 */
-/* 信号量是一个特殊的整型变量 */
-semaphore_t mutex; /* 临界区互斥 */
-semaphore_t s[N]; /* 每个哲学家一个信号量 */
+int SmonkeyCount;
+int NmonkeyCount;
+struct proc_struct *monkey_proc_condvar[MONKEY_N];
+int state_condvar[2];/* WAITING, PASSING, PASSED */
+monitor_t mt, *mtp = &mt;
 
-struct proc_struct *philosopher_proc_sema[N];
+semaphore_t monkey_mutex; /* 临界区互斥 */
+semaphore_t monkey_Smutex; /* 临界区互斥 */
+semaphore_t monkey_Nmutex; /* 临界区互斥 */
 
-void phi_test_sema(i) /* i：哲学家号码从0到N-1 */
-{ 
-    if(state_sema[i]==HUNGRY&&state_sema[LEFT]!=EATING
-            &&state_sema[RIGHT]!=EATING)
-    {
-        state_sema[i]=EATING;
-        up(&s[i]);
-    }
-}
-
-void phi_take_forks_sema(int i) /* i：哲学家号码从0到N-1 */
-{ 
-        down(&mutex); /* 进入临界区 */
-        state_sema[i]=HUNGRY; /* 记录下哲学家i饥饿的事实 */
-        phi_test_sema(i); /* 试图得到两只叉子 */
-        up(&mutex); /* 离开临界区 */
-        down(&s[i]); /* 如果得不到叉子就阻塞 */
-}
-
-void phi_put_forks_sema(int i) /* i：哲学家号码从0到N-1 */
-{ 
-        down(&mutex); /* 进入临界区 */
-        state_sema[i]=THINKING; /* 哲学家进餐结束 */
-        phi_test_sema(LEFT); /* 看一下左邻居现在是否能进餐 */
-        phi_test_sema(RIGHT); /* 看一下右邻居现在是否能进餐 */
-        up(&mutex); /* 离开临界区 */
-}
-
-int philosopher_using_semaphore(void * arg) /* i：哲学家号码，从0到N-1 */
+int south_monkey_using_sepaphore(void *arg)
 {
-    int i, iter=0;
-    i=(int)arg;
-    cprintf("I am No.%d philosopher_sema\n",i);
-    while(iter++<TIMES)
-    { /* 无限循环 */
-        cprintf("Iter %d, No.%d philosopher_sema is thinking\n",iter,i); /* 哲学家正在思考 */
+        int i = (int) arg;
+        cprintf("I am No.%d monkey from south.\n", i);
+        down(&monkey_Smutex);
+        if (SmonkeyCount == 0)
+                down(&monkey_mutex);
+        SmonkeyCount++;
+        up(&monkey_Smutex);
+        cprintf("No.%d monkey from south is passing the cordage.\n", i);
         do_sleep(SLEEP_TIME);
-        phi_take_forks_sema(i); 
-        /* 需要两只叉子，或者阻塞 */
-        cprintf("Iter %d, No.%d philosopher_sema is eating\n",iter,i); /* 进餐 */
+        cprintf("No.%d monkey from south already passed.\n", i);
+        down(&monkey_Smutex);
+        SmonkeyCount--;
+        if (SmonkeyCount == 0)
+                up(&monkey_mutex);
+        up(&monkey_Smutex);
+        return 0;
+}
+int north_monkey_using_sepaphore(void *arg)
+{
+        int i = (int) arg;
+        cprintf("I am No.%d monkey from north.\n", i);
+        down(&monkey_Nmutex);
+        if (NmonkeyCount == 0)
+                down(&monkey_mutex);
+        NmonkeyCount++;
+        up(&monkey_Nmutex);
+        cprintf("No.%d monkey from north is passing the cordage.\n", i);
         do_sleep(SLEEP_TIME);
-        phi_put_forks_sema(i); 
-        /* 把两把叉子同时放回桌子 */
-    }
-    cprintf("No.%d philosopher_sema quit\n",i);
-    return 0;    
+        cprintf("No.%d monkey from north already passed.\n", i);
+        down(&monkey_Nmutex);
+        NmonkeyCount--;
+        if (NmonkeyCount == 0){
+                up(&monkey_mutex);
+        }
+        up(&monkey_Nmutex);
+        return 0;
 }
-
-//-----------------philosopher problem using monitor ------------
-/*PSEUDO CODE :philosopher problem using monitor
- * monitor dp
- * {
- *  enum {thinking, hungry, eating} state[5];
- *  condition self[5];
- *
- *  void pickup(int i) {
- *      state[i] = hungry;
- *      if ((state[(i+4)%5] != eating) && (state[(i+1)%5] != eating)) {
- *        state[i] = eating;
- *      else
- *         self[i].wait();
- *   }
- *
- *   void putdown(int i) {
- *      state[i] = thinking;
- *      if ((state[(i+4)%5] == hungry) && (state[(i+3)%5] != eating)) {
- *          state[(i+4)%5] = eating;
- *          self[(i+4)%5].signal();
- *      }
- *      if ((state[(i+1)%5] == hungry) && (state[(i+2)%5] != eating)) {
- *          state[(i+1)%5] = eating;
- *          self[(i+1)%5].signal();
- *      }
- *   }
- *
- *   void init() {
- *      for (int i = 0; i < 5; i++)
- *         state[i] = thinking;
- *   }
- * }
- */
-
-struct proc_struct *philosopher_proc_condvar[N]; // N philosopher
-int state_condvar[N];                            // the philosopher's state: EATING, HUNGARY, THINKING  
-monitor_t mt, *mtp=&mt;                          // monitor
-
-void phi_test_condvar (i) { 
-    if(state_condvar[i]==HUNGRY&&state_condvar[LEFT]!=EATING
-            &&state_condvar[RIGHT]!=EATING) {
-        cprintf("phi_test_condvar: state_condvar[%d] will eating\n",i);
-        state_condvar[i] = EATING ;
-        cprintf("phi_test_condvar: signal self_cv[%d] \n",i);
-        cond_signal(&mtp->cv[i]) ;
-    }
-}
-
-
-void phi_take_forks_condvar(int i) {
-     down(&(mtp->mutex));
-//--------into routine in monitor--------------
-     // LAB7 EXERCISE1: YOUR CODE
-     // I am hungry
-     // try to get fork
-//--------leave routine in monitor--------------
-      state_condvar[i] = HUNGRY;
-	phi_test_condvar(i);
-	if(state_condvar[i] != EATING){
-		cond_wait(&mtp->cv[i]);
+void monkey_test_condvar(int i){
+	if(state_condvar[THISSIDE]==WAITING && state_condvar[OTHERSIDE]!=PASSING){
+		cprintf("monkey_test_condvar: state_condvar[%d] will be passing\n", i);
+		state_condvar[THISSIDE] = PASSING;
+		cprintf("monkey_test_condvar: signal_cv[%d]\n", i);
+		cond_signal(&mtp->cv[THISSIDE]);
 	}
-      if(mtp->next_count>0)
-         up(&(mtp->next));
-      else
-         up(&(mtp->mutex));
 }
 
-void phi_put_forks_condvar(int i) {
-     down(&(mtp->mutex));
-
-//--------into routine in monitor--------------
-     // LAB7 EXERCISE1: YOUR CODE
-     // I ate over
-     // test left and right neighbors
-//--------leave routine in monitor--------------
-        state_condvar[i] = THINKING;
-	phi_test_condvar(LEFT);
-	phi_test_condvar(RIGHT);
-     if(mtp->next_count>0)
-        up(&(mtp->next));
-     else
-        up(&(mtp->mutex));
+void monkey_hold_condvar(int i){
+	down(&(mtp->mutex)); /* Be waiting and try to pass the bridge */
+	state_condvar[THISSIDE] = WAITING;
+	monkey_test_condvar(i);
+	if(mtp->next_count > 0)
+		up(&(mtp->next));
+	else
+	up(&(mtp->mutex));
 }
-
-//---------- philosophers using monitor (condition variable) ----------------------
-int philosopher_using_condvar(void * arg) { /* arg is the No. of philosopher 0~N-1*/
-  
-    int i, iter=0;
-    i=(int)arg;
-    cprintf("I am No.%d philosopher_condvar\n",i);
-    while(iter++<TIMES)
-    { /* iterate*/
-        cprintf("Iter %d, No.%d philosopher_condvar is thinking\n",iter,i); /* thinking*/
-        do_sleep(SLEEP_TIME);
-        phi_take_forks_condvar(i); 
-        /* need two forks, maybe blocked */
-        cprintf("Iter %d, No.%d philosopher_condvar is eating\n",iter,i); /* eating*/
-        do_sleep(SLEEP_TIME);
-        phi_put_forks_condvar(i); 
-        /* return two forks back*/
-    }
-    cprintf("No.%d philosopher_condvar quit\n",i);
-    return 0;    
+void monkey_drop_condvar(int i){
+	down(&(mtp->mutex)); /* Passed through and test the otherside */
+	state_condvar[THISSIDE] = PASSED;
+	monkey_test_condvar(i);
+	if(mtp->next_count > 0)
+		up(&(mtp->next));
+	else
+	up(&(mtp->mutex));
+}
+int monkey_using_condvar(void *arg){ /* arg is the No. of monkey 0~N-1 */
+	int i = (int)arg;
+	cprintf("I'm No.%d monkey from the south.\n", i);
+	monkey_hold_condvar(i);
+	cprintf("No.%d monkey from the %s is passing the cordage.\n", i, (i%2==0)?"south":"north");
+	do_sleep(SLEEP_TIME);
+	cprintf("No.%d monkey from the %s has already passed.\n", i, (i%2==0)?"south":"north");
+	monkey_drop_condvar(i);
+	monkey_test_condvar(i);
+	return 0;
 }
 
 void check_sync(void){
-
-    int i;
-
-    //check semaphore
-    sem_init(&mutex, 1);
-    for(i=0;i<N;i++){
-        sem_init(&s[i], 0);
-        int pid = kernel_thread(philosopher_using_semaphore, (void *)i, 0);
-        if (pid <= 0) {
-            panic("create No.%d philosopher_using_semaphore failed.\n");
-        }
-        philosopher_proc_sema[i] = find_proc(pid);
-        set_proc_name(philosopher_proc_sema[i], "philosopher_sema_proc");
-    }
-
-    //check condition variable
-    monitor_init(&mt, N);
-    for(i=0;i<N;i++){
-        state_condvar[i]=THINKING;
-        int pid = kernel_thread(philosopher_using_condvar, (void *)i, 0);
-        if (pid <= 0) {
-            panic("create No.%d philosopher_using_condvar failed.\n");
-        }
-        philosopher_proc_condvar[i] = find_proc(pid);
-        set_proc_name(philosopher_proc_condvar[i], "philosopher_condvar_proc");
-    }
+	int i,SgenMonkeyCount = 0, NgenMonkeyCount = 0;
+	//check monkey
+	sem_init( &monkey_mutex, 1);
+	sem_init( &monkey_Smutex, 1);
+	sem_init( &monkey_Nmutex, 1);
+	SmonkeyCount = 0;
+	NmonkeyCount = 0;
+	while(SgenMonkeyCount+NgenMonkeyCount<MONKEY_N*2){
+		if(rand()%2){
+			if(SgenMonkeyCount<MONKEY_N){
+				int pid = kernel_thread(south_monkey_using_sepaphore, (void *)SgenMonkeyCount, 0);
+				if (pid <= 0)
+					panic("create No.%d monkey failed.\n");
+				set_proc_name(find_proc(pid), "monkey_proc");
+				SgenMonkeyCount++;
+			}
+		}else{
+			if(NgenMonkeyCount<MONKEY_N){
+				int pid = kernel_thread(north_monkey_using_sepaphore, (void *)NgenMonkeyCount, 0);
+				if (pid <= 0)
+					panic("create No.%d monkey failed.\n");
+				set_proc_name(find_proc(pid), "monkey_proc");
+				NgenMonkeyCount++;
+			}
+		}
+	}
 }
