@@ -1,131 +1,202 @@
 #include <stdio.h>
-#include <stdlib.h>
 #include <proc.h>
 #include <sem.h>
 #include <monitor.h>
 #include <assert.h>
-
-#define SLEEP_TIME 10
-#define MONKEY_N 20
-#define THISSIDE (i%2)
-#define OTHERSIDE (1-(i%2))
-#define WAITING 0
-#define PASSING 1
-#define PASSED 2
-
-int SmonkeyCount;
-int NmonkeyCount;
-struct proc_struct *monkey_proc_condvar[MONKEY_N];
-int state_condvar[2];/* WAITING, PASSING, PASSED */
-monitor_t mt, *mtp = &mt;
-
-semaphore_t monkey_mutex; /* 临界区互斥 */
-semaphore_t monkey_Smutex; /* 临界区互斥 */
-semaphore_t monkey_Nmutex; /* 临界区互斥 */
-
-int south_monkey_using_sepaphore(void *arg)
-{
-        int i = (int) arg;
-        cprintf("I am No.%d monkey from south.\n", i);
-        down(&monkey_Smutex);
-        if (SmonkeyCount == 0)
-                down(&monkey_mutex);
-        SmonkeyCount++;
-        up(&monkey_Smutex);
-        cprintf("No.%d monkey from south is passing the cordage.\n", i);
+// Part 1/4: Common Definitions
+#define N1 5
+#define N2 3
+#define TIMES 3
+#define SLEEP_TIME 1
+char randc_r(unsigned long* next) {  // POSIX.1-2001 example
+    *next = *next * 1103515245 + 12345;
+    return 'A' + ((unsigned)(*next/65536) % 26);
+}
+typedef struct buffer {
+    char* buf;
+    unsigned bufN;  // must be buffer size + 1
+    unsigned h, t;
+} buffer_t;
+void buf_init_alloc(buffer_t* buf, unsigned size) {
+    buf->bufN = size + 1;
+    buf->buf = kmalloc(buf->bufN);
+    buf->h = 0;
+    buf->t = 0;
+}
+void buf_init(buffer_t* buf, char* mem, unsigned memN) {
+    buf->buf = mem;
+    buf->bufN = memN;
+    buf->h = 0;
+    buf->t = 0;
+}
+void buf_put(buffer_t* buf, char c) {
+    buf->buf[buf->t++] = c;
+    buf->t = buf->t % buf->bufN;
+}
+char buf_get(buffer_t* buf) {
+    char c = buf->buf[buf->h++];
+    buf->h = buf->h % buf->bufN;
+    return c;
+}
+unsigned buf_count(buffer_t* buf) {
+    return (buf->t + buf->bufN - buf->h) % buf->bufN;
+}
+// Part 2/4: Semaphore
+semaphore_t mutex1, empty1, full1, mutex2, empty2, full2;
+buffer_t buf1_sema, buf2_sema;
+int input_sema(void* arg) {
+    int iter = 0;
+    unsigned long seed = 1;
+    while (iter++ < TIMES) {
         do_sleep(SLEEP_TIME);
-        cprintf("No.%d monkey from south already passed.\n", i);
-        down(&monkey_Smutex);
-        SmonkeyCount--;
-        if (SmonkeyCount == 0)
-                up(&monkey_mutex);
-        up(&monkey_Smutex);
-        return 0;
+        char c = randc_r(&seed);
+        cprintf("input_sema(%d): %c\n", iter, c);
+        down(&empty1);
+        down(&mutex1);
+        buf_put(&buf1_sema, c);
+        up(&mutex1);
+        up(&full1);
+    }
+    return 0;
 }
-int north_monkey_using_sepaphore(void *arg)
-{
-        int i = (int) arg;
-        cprintf("I am No.%d monkey from north.\n", i);
-        down(&monkey_Nmutex);
-        if (NmonkeyCount == 0)
-                down(&monkey_mutex);
-        NmonkeyCount++;
-        up(&monkey_Nmutex);
-        cprintf("No.%d monkey from north is passing the cordage.\n", i);
+int calc_sema(void* arg) {
+    int iter = 0;
+    while (iter++ < TIMES) {
+        down(&full1);
+        down(&mutex1);
+        char c = buf_get(&buf1_sema);
+        up(&mutex1);
+        up(&empty1);
+        cprintf("                    calc_sema(%d): %c -> ?\n", iter, c);
+        c += -'A'+'a';
+        do_sleep(SLEEP_TIME*3);
+        cprintf("                    calc_sema(%d): %c -> %c\n", iter, c-'a'+'A', c);
+        down(&empty2);
+        down(&mutex2);
+        buf_put(&buf2_sema, c);
+        up(&mutex2);
+        up(&full2);
+    }
+    return 0;
+}
+int output_sema(void* arg) {
+    int iter = 0;
+    while (iter++ < TIMES) {
+        down(&full2);
+        down(&mutex2);
+        char c = buf_get(&buf2_sema);
+        up(&mutex2);
+        up(&empty2);
+        cprintf("                                             output_sema(%d): %c\n", iter, c);
         do_sleep(SLEEP_TIME);
-        cprintf("No.%d monkey from north already passed.\n", i);
-        down(&monkey_Nmutex);
-        NmonkeyCount--;
-        if (NmonkeyCount == 0){
-                up(&monkey_mutex);
-        }
-        up(&monkey_Nmutex);
-        return 0;
+    }
+    return 0;
 }
-void monkey_test_condvar(int i){
-	if(state_condvar[THISSIDE]==WAITING && state_condvar[OTHERSIDE]!=PASSING){
-		cprintf("monkey_test_condvar: state_condvar[%d] will be passing\n", i);
-		state_condvar[THISSIDE] = PASSING;
-		cprintf("monkey_test_condvar: signal_cv[%d]\n", i);
-		cond_signal(&mtp->cv[THISSIDE]);
-	}
+// char mem1_sema[N1+1], mem2_sema[N2+1];
+void check_sema(void) {
+    sem_init(&mutex1, 1);
+    sem_init(&empty1, N1);
+    sem_init(&full1, 0);
+    sem_init(&mutex2, 1);
+    sem_init(&empty2, N2);
+    sem_init(&full2, 0);
+    // buf_init(&buf1_sema, mem1_sema, N1+1);
+    // buf_init(&buf2_sema, mem2_sema, N2+1);
+    buf_init_alloc(&buf1_sema, N1);
+    buf_init_alloc(&buf2_sema, N2);
+    if (kernel_thread(input_sema, NULL, 0) <= 0)
+        panic("create input_sema failed.\n");
+    if (kernel_thread(calc_sema, NULL, 0) <= 0)
+        panic("create calc_sema failed.\n");
+    if (kernel_thread(output_sema, NULL, 0) <= 0)
+        panic("create output_sema failed.\n");
 }
-
-void monkey_hold_condvar(int i){
-	down(&(mtp->mutex)); /* Be waiting and try to pass the bridge */
-	state_condvar[THISSIDE] = WAITING;
-	monkey_test_condvar(i);
-	if(mtp->next_count > 0)
-		up(&(mtp->next));
-	else
-	up(&(mtp->mutex));
+// Part 3/4: Monitor & Conditional Variable
+monitor_t mt1, mt2;
+buffer_t buf1_condvar, buf2_condvar;
+#define CV_EMPTY 0
+#define CV_FULL 1
+int input_condvar(void* arg) {
+     cprintf("create input_condvar succeeded!\n");
+   int iter = 0;
+    unsigned long seed = 2;
+    while (iter++ < TIMES) {
+        do_sleep(SLEEP_TIME);
+        char c = randc_r(&seed);
+        cprintf("input_condvar(%d): %c\n", iter, c);
+        down(&(mt1.mutex));
+        if (buf_count(&buf1_condvar) == N1)  // ucore is Hoare-style by `next`
+            cond_wait(&(mt1.cv[CV_EMPTY]));
+        buf_put(&buf1_condvar, c);
+        cond_signal(&(mt1.cv[CV_FULL]));
+        if (mt1.next_count > 0)
+            up(&(mt1.next));
+        else
+            up(&(mt1.mutex));
+    }
+    return 0;
 }
-void monkey_drop_condvar(int i){
-	down(&(mtp->mutex)); /* Passed through and test the otherside */
-	state_condvar[THISSIDE] = PASSED;
-	monkey_test_condvar(i);
-	if(mtp->next_count > 0)
-		up(&(mtp->next));
-	else
-	up(&(mtp->mutex));
+int calc_condvar(void* arg) {
+     cprintf("create calc_condvar succeeded!\n");
+    int iter = 0;
+    while (iter++ < TIMES) {
+        down(&(mt1.mutex));
+        if (buf_count(&buf1_condvar) == 0)
+            cond_wait(&(mt1.cv[CV_FULL]));
+        char c = buf_get(&buf1_condvar);
+        cond_signal(&(mt1.cv[CV_EMPTY]));
+        if (mt1.next_count > 0)
+            up(&(mt1.next));
+        else
+            up(&(mt1.mutex));
+        cprintf("                    calc_condvar(%d): %c -> ?\n", iter, c);
+        c += -'A'+'a';
+        do_sleep(SLEEP_TIME*3);
+        cprintf("                    calc_condvar(%d): %c -> %c\n", iter, c-'a'+'A', c);
+        down(&(mt2.mutex));
+        if (buf_count(&buf2_condvar) == N2)  // ucore is Hoare-style by `next`
+            cond_wait(&(mt2.cv[CV_EMPTY]));
+        buf_put(&buf2_condvar, c);
+        cond_signal(&(mt2.cv[CV_FULL]));
+        if (mt2.next_count > 0)
+            up(&(mt2.next));
+        else
+            up(&(mt2.mutex));
+    }
+    return 0;
 }
-int monkey_using_condvar(void *arg){ /* arg is the No. of monkey 0~N-1 */
-	int i = (int)arg;
-	cprintf("I'm No.%d monkey from the south.\n", i);
-	monkey_hold_condvar(i);
-	cprintf("No.%d monkey from the %s is passing the cordage.\n", i, (i%2==0)?"south":"north");
-	do_sleep(SLEEP_TIME);
-	cprintf("No.%d monkey from the %s has already passed.\n", i, (i%2==0)?"south":"north");
-	monkey_drop_condvar(i);
-	monkey_test_condvar(i);
-	return 0;
+int output_condvar(void* arg) {
+     cprintf("create output_condvar succeeded!\n");
+    int iter = 0;
+    while (iter++ < TIMES) {
+        down(&(mt2.mutex));
+        if (buf_count(&buf2_condvar) == 0)
+            cond_wait(&mt2.cv[CV_FULL]);
+        char c = buf_get(&buf2_condvar);
+        cond_signal(&(mt2.cv[CV_EMPTY]));
+        if (mt2.next_count > 0)
+            up(&(mt2.next));
+        else
+            up(&(mt2.mutex));
+        cprintf("                                             output_condvar(%d): %c\n", iter, c);
+        do_sleep(SLEEP_TIME);
+    }
+    return 0;
 }
-
-void check_sync(void){
-	int i,SgenMonkeyCount = 0, NgenMonkeyCount = 0;
-	//check monkey
-	sem_init( &monkey_mutex, 1);
-	sem_init( &monkey_Smutex, 1);
-	sem_init( &monkey_Nmutex, 1);
-	SmonkeyCount = 0;
-	NmonkeyCount = 0;
-	while(SgenMonkeyCount+NgenMonkeyCount<MONKEY_N*2){
-		if(rand()%2){
-			if(SgenMonkeyCount<MONKEY_N){
-				int pid = kernel_thread(south_monkey_using_sepaphore, (void *)SgenMonkeyCount, 0);
-				if (pid <= 0)
-					panic("create No.%d monkey failed.\n");
-				set_proc_name(find_proc(pid), "monkey_proc");
-				SgenMonkeyCount++;
-			}
-		}else{
-			if(NgenMonkeyCount<MONKEY_N){
-				int pid = kernel_thread(north_monkey_using_sepaphore, (void *)NgenMonkeyCount, 0);
-				if (pid <= 0)
-					panic("create No.%d monkey failed.\n");
-				set_proc_name(find_proc(pid), "monkey_proc");
-				NgenMonkeyCount++;
-			}
-		}
-	}
+void check_condvar(void) {
+    monitor_init(&mt1, 2);
+    monitor_init(&mt2, 2);
+    buf_init_alloc(&buf1_condvar, N1);
+    buf_init_alloc(&buf2_condvar, N2);
+    if (kernel_thread(input_condvar, NULL, 0) <= 0)
+        panic("create input_condvar failed.\n");
+    if (kernel_thread(calc_condvar, NULL, 0) <= 0)
+        panic("create calc_condvar failed.\n");
+    if (kernel_thread(output_condvar, NULL, 0) <= 0)
+        panic("create output_condvar failed.\n");
+}
+// Part 4/4: Entry Point
+void check_sync(void) {
+//    check_sema();
+    check_condvar();
 }
