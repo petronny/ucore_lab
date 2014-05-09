@@ -6,8 +6,8 @@
 // Part 1/4: Common Definitions
 #define N1 5
 #define N2 3
-#define TIMES 3
-#define SLEEP_TIME 1
+#define TIMES 20
+#define SLEEP_TIME 10
 char randc_r(unsigned long* next) {  // POSIX.1-2001 example
     *next = *next * 1103515245 + 12345;
     return 'A' + ((unsigned)(*next/65536) % 26);
@@ -197,6 +197,7 @@ void check_condvar(void) {
 }
 // Part 4/4: Entry Point
 void check_sync(void) {
-//    check_sema();
+    check_sema();
+    do_sleep(SLEEP_TIME*TIMES*4);
     check_condvar();
 }
